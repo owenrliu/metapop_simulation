@@ -1,0 +1,25 @@
+---
+title: "Metapopulation Simulation"
+author: "Owen Liu"
+date: "Thursday, October 15, 2015"
+output: html_document
+---
+
+## Introduction and Project Goals
+
+This is an exploration of the use of matrix population models to explore
+population dynamics in a metapopulation context, in which local populations
+can be demographically open or closed, and vary in their demographic rates,
+especially in the survival of YOY, or new recruits.  First, the model formulation
+will be general, then I will attempt to parameterize it for specific species.
+
+Much of the model formulation is based on Caswell (2001) and adapted from
+Armstrong(2002). The initial goals (subject to change) are to:
+
+* practice building matrix models
+
+* investigate measurements of stability and resilience using such models
+
+* think about the consequences of metapopulation structure for resilience
+
+* practice using RMarkdown and GitHub
