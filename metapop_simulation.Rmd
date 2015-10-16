@@ -35,7 +35,6 @@ ext <- 100000 #number of externally supplied larvae
 e.vec <- c(1,rep(0,(ages))) #allows addition of external larvae to the matrix
 ret <- 0.5 #proportion of locally produced larvae that return (self-seeding proportion)
 p.vec <- rep(0.863,ages+1) #survivorship vector (p.vec[i] is the survival from age i-1 to i)
-f.vec <- 1:(ages+1) #fertility vector
 
 #Von Bertalanffy parameters
 Linf <- 52.2 #L infinity, asymptotic length
@@ -46,5 +45,35 @@ vb <- c(Linf, K, t0) #concatenated 3 V-B growth params
 #Fecundity/fertility/length relationship
 f1 <- 0.0129
 f2 <- 3.03
-
 ```
+
+### Von Bertalanffy Growth
+```{r VB Growth}
+vb.growth <- function(age.vec,vb)  { 
+  ## function that takes an age vector and a vector of V-B params, c(Linf, K, t0)
+  ## returns a vector of lengths
+  lengths <- sapply(age.vec, function(x) vb[1]*(1-exp(-vb[2]*(x-vb[3]))))
+  return(lengths)
+  }
+
+## with our parameters:
+l.vec <- vb.growth(age.vec=0:ages,vb=vb) #vector of lengths (to be used later)
+plot(0:ages,l.vec,main="Age vs. Length",type='l',xlab='Age, years',ylab='Length, cm',
+     xaxs='i')
+```
+
+### Fecundity relationship
+```{r fertility function}
+fert <- function(l.vec,f1,f2) {
+  ## function that takes two parameters and a vector of lengths to estimate fertility
+  ## from Armstrong (2002) and Sadovy (1996)
+  f <- sapply(l.vec, function(x) f1*x^f2)
+  return(f)
+}
+
+# with our parameters:
+f.vec <- fert(l.vec=l.vec,f1=f1,f2=f2)
+plot(0:ages,f.vec,main="Age vs. Fecundity",type='l',xlab='Age, years',ylab='Fertility (# eggs)',
+     xaxs='i')
+```
+
