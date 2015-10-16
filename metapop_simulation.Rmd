@@ -23,3 +23,28 @@ Armstrong(2002). The initial goals (subject to change) are to:
 * think about the consequences of metapopulation structure for resilience
 
 * practice using RMarkdown and GitHub
+
+## Model Construction
+
+### Parameters for the matrix model(s)
+
+```{r params}
+ages <- 14 #max age class
+gamma <- 0.5 #proportion of settling larvae that survive the first year
+ext <- 100000 #number of externally supplied larvae
+e.vec <- c(1,rep(0,(ages))) #allows addition of external larvae to the matrix
+ret <- 0.5 #proportion of locally produced larvae that return (self-seeding proportion)
+p.vec <- rep(0.863,ages+1) #survivorship vector (p.vec[i] is the survival from age i-1 to i)
+f.vec <- 1:(ages+1) #fertility vector
+
+#Von Bertalanffy parameters
+Linf <- 52.2 #L infinity, asymptotic length
+K <- 0.354 #growth rate
+t0 <- -0.766 #theoretical age at zero length
+vb <- c(Linf, K, t0) #concatenated 3 V-B growth params
+
+#Fecundity/fertility/length relationship
+f1 <- 0.0129
+f2 <- 3.03
+
+```
