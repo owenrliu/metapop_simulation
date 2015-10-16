@@ -14,7 +14,7 @@ especially in the survival of YOY, or new recruits.  First, the model formulatio
 will be general, then I will attempt to parameterize it for specific species.
 
 Much of the model formulation is based on Caswell (2001) and adapted from
-Armstrong(2002). The initial goals (subject to change) are to:
+Armsworth(2002). The initial goals (subject to change) are to:
 
 * practice building matrix models
 
@@ -28,26 +28,41 @@ Armstrong(2002). The initial goals (subject to change) are to:
 
 ### Parameters for the matrix model(s)
 
-```{r params}
-ages <- 14 #max age class
-gamma <- 0.5 #proportion of settling larvae that survive the first year
-ext <- 100000 #number of externally supplied larvae
-e.vec <- c(1,rep(0,(ages))) #allows addition of external larvae to the matrix
-ret <- 0.5 #proportion of locally produced larvae that return (self-seeding proportion)
-p.vec <- rep(0.863,ages+1) #survivorship vector (p.vec[i] is the survival from age i-1 to i)
+Age-structured matrix model, where population is structured into $\omega$ age classes.
 
-#Von Bertalanffy parameters
+```{r params}
+max.age <- 14 # max age class (number of age classes will be this plus 1 (for age 0)
+gamma <- 0.125 # proportion of settling larvae that survive the first year
+ext <- 100000 # number of externally supplied larvae
+e.vec <- c(1,rep(0,(max.age))) # allows addition of external larvae to the matrix
+ret <- 0.5 # proportion of locally produced larvae that return (self-seeding proportion)
+p.vec <- c(1,rep(0.863,max.age)) # survivorship vector (p.vec[i] is the survival from age i-2 to i-1)
+
+## Rate of self-recruitment
+a <- 0.001
+
+## Von Bertalanffy parameters
 Linf <- 52.2 #L infinity, asymptotic length
 K <- 0.354 #growth rate
 t0 <- -0.766 #theoretical age at zero length
 vb <- c(Linf, K, t0) #concatenated 3 V-B growth params
 
-#Fecundity/fertility/length relationship
+## Fecundity/fertility/length relationship
+repr.age <- 2 #age at first reproduction
 f1 <- 0.0129
 f2 <- 3.03
+
+## Beverton-Holt parameter, for density-dependent model
+beta <- 15
+
 ```
 
-### Von Bertalanffy Growth
+#### Von Bertalanffy Growth
+
+The classic Von Bertalanffy Growth equation, of the form
+
+$$L(t) = L_\infty(1-e^{-K(t-t_0)})$$
+
 ```{r VB Growth}
 vb.growth <- function(age.vec,vb)  { 
   ## function that takes an age vector and a vector of V-B params, c(Linf, K, t0)
@@ -57,23 +72,80 @@ vb.growth <- function(age.vec,vb)  {
   }
 
 ## with our parameters:
-l.vec <- vb.growth(age.vec=0:ages,vb=vb) #vector of lengths (to be used later)
-plot(0:ages,l.vec,main="Age vs. Length",type='l',xlab='Age, years',ylab='Length, cm',
+l.vec <- vb.growth(age.vec=0:max.age,vb=vb) #vector of lengths (to be used later)
+plot(0:max.age,l.vec,main="Age vs. Length",type='l',xlab='Age, years',ylab='Length, cm',
      xaxs='i')
 ```
 
-### Fecundity relationship
+#### Fecundity relationship
+
+This function relates length to fecundity, and is a power function that can be parameterized on a species-specific basis.  Adopted from Sadovy (1996)
+
+*Note: fecundity is zero until reproductive age (a parameter above) is reached*
+
 ```{r fertility function}
-fert <- function(l.vec,f1,f2) {
-  ## function that takes two parameters and a vector of lengths to estimate fertility
-  ## from Armstrong (2002) and Sadovy (1996)
+fert <- function(age.vec, vb, repr.age, f1,f2) {
+  ## function that builds on VB equation above, taking three more parameters to calculate fertility
+  ## as a function of age.
+  ## From Armsworth (2002) and Sadovy (1996)
+  l.vec <- vb.growth(age.vec=age.vec,vb=vb)
   f <- sapply(l.vec, function(x) f1*x^f2)
+  f[1:repr.age] <- 0
   return(f)
 }
 
 # with our parameters:
-f.vec <- fert(l.vec=l.vec,f1=f1,f2=f2)
-plot(0:ages,f.vec,main="Age vs. Fecundity",type='l',xlab='Age, years',ylab='Fertility (# eggs)',
+f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+plot(0:max.age,f.vec,main="Age vs. Fecundity",type='l',xlab='Age, years',ylab='Fertility (# eggs)',
      xaxs='i')
 ```
 
+
+#### Net Reproductive Rate
+
+The net reproductive rate, $R$, is a useful concept, and is defined as the expected lifetime reproductive contribution from an individual that survives the first year, from Caswell (2001).  $R$ is useful because if $R\gamma$*a* (the expected per capita lifetime production of recruits) is less than 1, we can expect than the population will shrink (below replacement level; i.e. a *sink* population) because an individual is not expected to replace itself.  The converse is also true, that when $R\gamma$*a* is greater than 1, the population will be a *source* :
+
+$$R = \sum_{t=1}^{\omega}f_{1}\prod_{k=0}^{t-1}p_{k}$$
+
+```{r net repro rate}
+net.R <- function(f.vec,p.vec) {
+  p.cum <- numeric()
+  for (i in 1:(max.age+1)) { #cumulative survival (i.e. vector of prob. surviving age 0:x)
+    p.cum[i] <- prod(p.vec[1:i])
+  }
+  R <- sum(f.vec*p.cum)
+  return(R)
+}
+```
+
+### Local, density independent population
+
+The density-independent model for a local population takes the form
+
+$$\textbf{N}(\textit{t} + 1) = \textbf{MN}(\textit{t}) + \gamma\xi\textbf{e}$$
+
+where **M** is a Leslie matrix, $\gamma$ is the proportion of settlers that survive the year, $\xi$ is the number of externally supplied larvae, and **e** is a vector to allow external larvae to effect the matrix. We will also use the defined parameter *a* $\in$ [0,1], which is the proportion of locally produced larvae that return to the same local adult population, i.e. the rate of self-recruitment.
+
+We can now construct the Leslie matrix **M** :
+
+```{r Leslie matrix density independent}
+M.di <- function (a, gamma, f.vec, p.vec) {
+  M=matrix(nrow=max.age+1,ncol=max.age+1)
+  r1 <- f.vec*a*gamma #first row, allowing for a partially open population and settler mortality in year 1
+  M[1,] <-r1
+  for (i in 2:(max.age+1)) { #rows 2 to max age
+    row <- numeric(max.age+1)
+    row[i-1] <- p.vec[i]
+    M[i,] <- row
+  }
+  return(M)
+}
+```
+
+In this model formulation, the long-term growth or decline is determined by $R$ (or, equivalently, by the dominant eigenvalue of **M**), and consequently by the self-recruitment rate *a*.  Whether the population will grow or decline in the long-term is *not* determined by $\xi$, since it is an additive, not a multiplicative term.  $\xi$ will, however, influence abundance.  We will return to this model later in simulation.
+
+### Local, density dependent population
+
+It has been observed that there can be density-dependent dynamics early in the life-history, and we will model it here as density-dependence in the first year of life, where $S$ is the larval supply, and $\Gamma(S(t)) is a Beverton-Holt type relationship:
+
+$$N_{1}(t) = \Gamma(S(t)) = \frac{\gamma S(t)}{1+\beta S(t)}$$
