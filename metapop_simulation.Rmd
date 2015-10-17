@@ -53,7 +53,7 @@ f1 <- 0.0129
 f2 <- 3.03
 
 ## Beverton-Holt parameter, for density-dependent model
-beta <- 15
+B <- .002 # (B-H beta parameter)
 
 ```
 
@@ -146,6 +146,23 @@ In this model formulation, the long-term growth or decline is determined by $R$ 
 
 ### Local, density dependent population
 
-It has been observed that there can be density-dependent dynamics early in the life-history, and we will model it here as density-dependence in the first year of life, where $S$ is the larval supply, and $\Gamma(S(t)) is a Beverton-Holt type relationship:
+It has been observed that there can be density-dependent dynamics early in the life-history, and we will model it here as density-dependence in the first year of life, where $S = a\sum_{t=1}^{\omega}f_{t}N_{t}+\xi$ is the larval supply, and $\Gamma(S(t))$ is a Beverton-Holt type relationship:
 
 $$N_{1}(t) = \Gamma(S(t)) = \frac{\gamma S(t)}{1+\beta S(t)}$$
+
+```{r S and Gamma B-H function}
+S.dd <- function(a,f.vec,n.vec,ext) {
+  a*sum(f.vec*n.vec)+ext
+}
+
+G <- function(a,f.vec,n.vec,ext,gamma,B) { #utilizes the S(t) equation above
+  s <- S.dd(a,f.vec,n.vec,ext)
+  out <- (gamma*s)/(1+B*s)
+  return(out)
+}
+n.vec.test <- seq(1,4000,by=50)
+B.vec.test <- seq(0.001,0.01,by=.0001)
+S.test <- sapply(n.vec.test, S.dd, a=a,f.vec=f.vec,ext=ext)
+G.test <- sapply(n.vec.test,G,B=0.001,a=a,f.vec=f.vec,ext=ext,gamma=gamma)
+plot(n.vec.test,G.test, type='l')
+```

@@ -93,7 +93,10 @@ vb &lt;- c(Linf, K, t0) #concatenated 3 V-B growth params
 ## Fecundity/fertility/length relationship
 repr.age &lt;- 2 #age at first reproduction
 f1 &lt;- 0.0129
-f2 &lt;- 3.03</code></pre>
+f2 &lt;- 3.03
+
+## Beverton-Holt parameter, for density-dependent model
+beta &lt;- 15</code></pre>
 <div id="von-bertalanffy-growth" class="section level4">
 <h4>Von Bertalanffy Growth</h4>
 <p>The classic Von Bertalanffy Growth equation, of the form</p>
@@ -166,8 +169,12 @@ plot(0:max.age,f.vec,main=&quot;Age vs. Fecundity&quot;,type='l',xlab='Age, year
 </div>
 <div id="local-density-dependent-population" class="section level3">
 <h3>Local, density dependent population</h3>
-<p>It has been observed that there can be density-dependent dynamics early in the life-history, and we will model it here as density-dependence in the first year of life, where <span class="math">\(S\)</span> is the larval supply, and $(S(t)) is a Beverton-Holt type relationship:</p>
+<p>It has been observed that there can be density-dependent dynamics early in the life-history, and we will model it here as density-dependence in the first year of life, where <span class="math">\(S = a\sum_{t=1}^{\omega}f_{t}N_{t}+\xi\)</span> is the larval supply, and <span class="math">\(\Gamma(S(t))\)</span> is a Beverton-Holt type relationship:</p>
 <p><span class="math">\[N_{1}(t) = \Gamma(S(t)) = \frac{\gamma S(t)}{1+\beta S(t)}\]</span></p>
+<pre class="r"><code>G &lt;- function(gamma,s.vec,beta) {
+  out &lt;- (gamma*s.vec)/(1+beta*s.vec)
+  return(out)
+}</code></pre>
 </div>
 </div>
 
