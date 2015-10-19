@@ -28,12 +28,12 @@ Armsworth(2002). The initial goals (subject to change) are to:
 
 ### Parameters for the matrix model(s)
 
-Age-structured matrix model, where population is structured into $\omega$ age classes.
+Age-structured matrix model, where population is structured into $\omega$ age classes, and abundance denoted by $\textbf{N} = (N_{1},...,N_{\omega})$. A vector $\textbf{p}$ describes survival, where, for example, $p_{i}$ is the proportional survival of individuals from age $i$ to age $i+1$.  Similarly, $\textbf{f}_{i}$ is the fertility of individuals of age $i$.  $\xi$ is the number of external larvae supplied to a local population; $a \in [0,1]$ is the self-recruitment rate, that is, the proportion of locally produced larvae that return to that population; and $\gamma$ is the proportion of settlers that remain alive at the end of the first year.
 
 ```{r params}
 max.age <- 14 # max age class (number of age classes will be this plus 1 (for age 0)
 gamma <- 0.125 # proportion of settling larvae that survive the first year
-ext <- 100000 # number of externally supplied larvae
+ext <- 1000 # number of externally supplied larvae
 e.vec <- c(1,rep(0,(max.age))) # allows addition of external larvae to the matrix
 ret <- 0.5 # proportion of locally produced larvae that return (self-seeding proportion)
 p.vec <- c(1,rep(0.863,max.age)) # survivorship vector (p.vec[i] is the survival from age i-2 to i-1)
@@ -53,7 +53,7 @@ f1 <- 0.0129
 f2 <- 3.03
 
 ## Beverton-Holt parameter, for density-dependent model
-B <- .002 # (B-H beta parameter)
+B <- .0001 # (B-H beta parameter)
 
 ```
 
@@ -160,9 +160,50 @@ G <- function(a,f.vec,n.vec,ext,gamma,B) { #utilizes the S(t) equation above
   out <- (gamma*s)/(1+B*s)
   return(out)
 }
+```
+
+```{r gamma d.d. qualitative plot, echo=F}
 n.vec.test <- seq(1,4000,by=50)
-B.vec.test <- seq(0.001,0.01,by=.0001)
-S.test <- sapply(n.vec.test, S.dd, a=a,f.vec=f.vec,ext=ext)
-G.test <- sapply(n.vec.test,G,B=0.001,a=a,f.vec=f.vec,ext=ext,gamma=gamma)
-plot(n.vec.test,G.test, type='l')
+G.test <- sapply(n.vec.test,G,B=B,a=a,f.vec=f.vec,ext=ext,gamma=gamma)
+plot(n.vec.test,G.test, type='l',xaxt='n',yaxt='n', main='Density-dependent settler survival',xlab='Number of initial settlers', ylab='Number surviving to age 1')
+```
+
+The matrix formulation for this population will be qualitatively the density-independent population above, but with the change that the top row of the matrix, specifying the contribution of reproduction to the age-1 cohort ($N_{1}$), will be a function, $\Gamma(S)$, instead of a constant, and consequently the specific values of those matrix cells will change each iteration during simulation (below).  Since for now, survival after age-1,  $p_{1}...p_{\omega-1}$, is still density independent and constant, the rows below in the Leslie matrix do not change from the D.I. case.
+
+```{r Leslie matrix density dependent}
+M.dd <- function (a, gamma, f.vec, p.vec,n.vec,ext, B) {
+  M=matrix(nrow=max.age+1,ncol=max.age+1)
+  ## Calls the G(S) function, which requires 3 new params: n.vec, ext, and B
+  g <- G(a=a,f.vec=f.vec,n.vec=n.vec,ext=ext,gamma=gamma,B=B)
+  r1 <- f.vec*a*g #first row, allowing for a partially open population and settler mortality in year 1
+  M[1,] <-r1
+  for (i in 2:(max.age+1)) { #rows 2 to max age
+    row <- numeric(max.age+1)
+    row[i-1] <- p.vec[i]
+    M[i,] <- row
+  }
+  return(M)
+}
+```
+
+
+## Simulations for Local Population
+
+To start, we can explore the behavior of these models by simulating a virtual population, described by the parameters above, and look at patterns over time in age sructure and population dynamics.  First, for the density independent local population.
+
+```{r local d.i. population simulation 1, echo=FALSE}
+d.i.sim1 <- matrix(nrow=(max.age+1), ncol=200)
+d.i.simtot <- numeric()
+Ninit <- rep(250,15)
+d.i.sim1[,1] <- Ninit
+d.i.simtot <- sum(Ninit)
+for (i in 1:199) {
+  a.rand <- rbeta(n=1,shape1=0.01,shape2=10)
+  e.rand <- rnorm(1,mean=ext,sd=(0.5*ext)) #with somewhat stochastic external larval supply
+  M <- M.di(a=a.rand, gamma=gamma, f.vec=f.vec, p.vec=p.vec)
+  N.vec <- M%*%d.i.sim1[,i] + (gamma*e.rand*e.vec)
+  d.i.sim1[,i+1] <- N.vec
+  d.i.simtot[i+1] <- sum(N.vec)
+  }
+plot(1:200,d.i.sim1[15,],type='l')
 ```
