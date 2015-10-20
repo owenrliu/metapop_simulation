@@ -5,6 +5,10 @@ date: "Thursday, October 15, 2015"
 output: html_document
 ---
 
+```{r packages,echo=F,results='hide'}
+library(RColorBrewer)
+```
+
 ## Introduction and Project Goals
 
 This is an exploration of the use of matrix population models to explore
@@ -38,7 +42,7 @@ e.vec <- c(1,rep(0,(max.age))) # allows addition of external larvae to the matri
 ret <- 0.5 # proportion of locally produced larvae that return (self-seeding proportion)
 p.vec <- c(1,rep(0.863,max.age)) # survivorship vector (p.vec[i] is the survival from age i-2 to i-1)
 
-## Rate of self-recruitment
+## Rate of self-recruitment (placeholder; sampled from a beta distribution later)
 a <- 0.001
 
 ## Von Bertalanffy parameters
@@ -55,6 +59,8 @@ f2 <- 3.03
 ## Beverton-Holt parameter, for density-dependent model
 B <- .0001 # (B-H beta parameter)
 
+## Years for each simulation
+sim.years <- 200
 ```
 
 #### Von Bertalanffy Growth
@@ -191,19 +197,51 @@ M.dd <- function (a, gamma, f.vec, p.vec,n.vec,ext, B) {
 
 To start, we can explore the behavior of these models by simulating a virtual population, described by the parameters above, and look at patterns over time in age sructure and population dynamics.  First, for the density independent local population.
 
-```{r local d.i. population simulation 1, echo=FALSE}
-d.i.sim1 <- matrix(nrow=(max.age+1), ncol=200)
+We can sample $a\in(0,1)$ from a skewed beta distribution, since in most years it will be very small.  $\xi$, the external larval supply, is sampled from a lognormal distribution.  The cv of both $a$ and $\xi$ are the same, cv=0.5.
+
+```{r local d.i. population simulation 1, echo=FALSE,results='hide'}
+estBetaParams <- function(mu, cv) { # estimates parameters for a beta distribution, for a desired mean and cv
+  var = (cv*mu)^2
+  alpha <- ((1 - mu) / var - 1 / mu) * mu ^ 2
+  beta <- alpha * (1 / mu - 1)
+  return(params = list(alpha = alpha, beta = beta))
+}
+## for a mean of around 0.1% (0.001) for a, and a cv of 0.5, the parameters are:
+
+ext.meanlog <- 6.67
+ext.sdlog <- 0.47
+
+estlnormParams <- function(mean,cv) { #estimates location and scale parameters for a lognormal distribution for a desired mean and cv, for use in R's rlnorm function
+  var = (cv*mean)^2
+  scale <- sqrt(log(1+var/mean^2))
+  loc <- log(mean)-scale/2
+  return(params=list(meanlog=loc, sdlog=scale))
+  }
+## for a mean of around 0.1% (0.001) for a, and a cv of 0.5, the parameters are:
+
+a.alpha <- 4
+a.beta <- 4000
+
+d.i.sim1 <- matrix(nrow=(max.age+1), ncol=sim.years)
 d.i.simtot <- numeric()
 Ninit <- rep(250,15)
 d.i.sim1[,1] <- Ninit
 d.i.simtot <- sum(Ninit)
-for (i in 1:199) {
-  a.rand <- rbeta(n=1,shape1=0.01,shape2=10)
-  e.rand <- rnorm(1,mean=ext,sd=(0.5*ext)) #with somewhat stochastic external larval supply
-  M <- M.di(a=a.rand, gamma=gamma, f.vec=f.vec, p.vec=p.vec)
-  N.vec <- M%*%d.i.sim1[,i] + (gamma*e.rand*e.vec)
+a.rand <- rbeta(n=sim.years,shape1=a.alpha,shape2=a.beta) # a sampled from beta distribution
+ext.rand <- rlnorm(n=sim.years,meanlog=ext.meanlog,sdlog=ext.sdlog) # ext sample from a lognormal distribution
+for (i in 1:(sim.years-1)) {
+  M <- M.di(a=a.rand[i], gamma=gamma, f.vec=f.vec, p.vec=p.vec)
+  N.vec <- M%*%d.i.sim1[,i] + (gamma*ext.rand[i]*e.vec)
   d.i.sim1[,i+1] <- N.vec
   d.i.simtot[i+1] <- sum(N.vec)
   }
-plot(1:200,d.i.sim1[15,],type='l')
+plot(1:sim.years,d.i.sim1[15,],type='l')
+plot(1:sim.years,d.i.simtot,type='l')
+
+sim1.props <- apply(d.i.sim1, MARGIN=2,FUN= function(x) x/sum(x))
+cols <- rainbow(15)
+plot(150:160,sim1.props[1,150:160],col=cols[1],type='l')
+for(i in 2:15){
+  lines(150:160,sim1.props[i,150:160],col=cols[i],type='l')
+}
 ```
