@@ -7,6 +7,7 @@ output: html_document
 
 ```{r packages,echo=F,results='hide'}
 library(RColorBrewer)
+library(ggplot2)
 ```
 
 ## Introduction and Project Goals
@@ -40,7 +41,8 @@ gamma <- 0.125 # proportion of settling larvae that survive the first year
 ext <- 1000 # number of externally supplied larvae
 e.vec <- c(1,rep(0,(max.age))) # allows addition of external larvae to the matrix
 ret <- 0.5 # proportion of locally produced larvae that return (self-seeding proportion)
-p.vec <- c(1,rep(0.863,max.age)) # survivorship vector (p.vec[i] is the survival from age i-2 to i-1)
+surv <- 0.863 # natural survival of post-settler larvae
+p.vec <- c(1,rep(surv,max.age)) # survivorship vector (p.vec[i] is the survival from age i-2 to i-1)
 
 ## Rate of self-recruitment (placeholder; sampled from a beta distribution later)
 a <- 0.001
@@ -195,11 +197,11 @@ M.dd <- function (a, gamma, f.vec, p.vec,n.vec,ext, B) {
 
 ## Simulations for Local Population
 
-To start, we can explore the behavior of these models by simulating a virtual population, described by the parameters above, and look at patterns over time in age sructure and population dynamics.  First, for the density independent local population.
+To start, we can explore the behavior of these models by simulating a virtual population, described by the parameters above, and look at patterns over time in age sructure and population dynamics.  First, we can write a general simulation function, and apply it to the density independent local population.
 
-We can sample $a\in(0,1)$ from a skewed beta distribution, since in most years it will be very small.  $\xi$, the external larval supply, is sampled from a lognormal distribution.  The cv of both $a$ and $\xi$ are the same, cv=0.5.
+We can sample $a\in(0,1)$ from a skewed beta distribution, Beta$(\alpha,\beta)$, since in most years it will be very small.  $\xi$, the external larval supply, is sampled from a lognormal distribution.  The cv of both $a$ and $\xi$ are the same, cv=0.5.
 
-```{r local d.i. population simulation 1, echo=FALSE,results='hide'}
+```{r distribution parameters for stochasticisty, echo=FALSE,results='hide'}
 estBetaParams <- function(mu, cv) { # estimates parameters for a beta distribution, for a desired mean and cv
   var = (cv*mu)^2
   alpha <- ((1 - mu) / var - 1 / mu) * mu ^ 2
@@ -221,6 +223,18 @@ estlnormParams <- function(mean,cv) { #estimates location and scale parameters f
 
 a.alpha <- 4
 a.beta <- 4000
+```
+
+```{r d.i. local population simulation function, echo=FALSE, include=FALSE}
+
+## Calls all the parts we've coded so far
+# sim.pop <- function(nsims=100,nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, repr.age=2, f1=0.0129,f2=3.03,a.alpha=4,a.beta=4000,gamma, f.vec, p.vec,n.vec,ext, B) {
+  age.vec <- 0:max.age
+  l.vec <- vb.growth(age.vec=0:max.age,vb=vb) #vector of lengths (to be used later)
+  f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+  p.vec <- c(1,rep(surv,max.age))
+  
+}
 
 d.i.sim1 <- matrix(nrow=(max.age+1), ncol=sim.years)
 d.i.simtot <- numeric()
@@ -244,4 +258,7 @@ plot(150:160,sim1.props[1,150:160],col=cols[1],type='l')
 for(i in 2:15){
   lines(150:160,sim1.props[i,150:160],col=cols[i],type='l')
 }
+mean.props <- apply(sim1.props, MARGIN=1, FUN=mean) #mean proportions
+sd.props <- apply(sim1.props, MARGIN=1, FUN=sd) #sd proportions
+cv.props <- apply(sim1.props, MARGIN=1, FUN= function(x) sd(x)/mean(x)) #cv of proportions
 ```
