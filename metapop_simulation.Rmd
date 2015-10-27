@@ -8,6 +8,7 @@ output: html_document
 ```{r packages,echo=F,results='hide'}
 library(RColorBrewer)
 library(ggplot2)
+library(reshape2)
 ```
 
 ## Introduction and Project Goals
@@ -92,7 +93,7 @@ This function relates length to fecundity, and is a power function that can be p
 *Note: fecundity is zero until reproductive age (a parameter above) is reached*
 
 ```{r fertility function}
-fert <- function(age.vec, vb, repr.age, f1,f2) {
+ fert <- function(age.vec, vb, repr.age, f1,f2) {
   ## function that builds on VB equation above, taking three more parameters to calculate fertility
   ## as a function of age.
   ## From Armsworth (2002) and Sadovy (1996)
@@ -137,7 +138,7 @@ where **M** is a Leslie matrix, $\gamma$ is the proportion of settlers that surv
 We can now construct the Leslie matrix **M** :
 
 ```{r Leslie matrix density independent}
-M.di <- function (a, gamma, f.vec, p.vec) {
+M.di <- function (max.age,a, gamma, f.vec, p.vec) {
   M=matrix(nrow=max.age+1,ncol=max.age+1)
   r1 <- f.vec*a*gamma #first row, allowing for a partially open population and settler mortality in year 1
   M[1,] <-r1
@@ -179,7 +180,7 @@ plot(n.vec.test,G.test, type='l',xaxt='n',yaxt='n', main='Density-dependent sett
 The matrix formulation for this population will be qualitatively the density-independent population above, but with the change that the top row of the matrix, specifying the contribution of reproduction to the age-1 cohort ($N_{1}$), will be a function, $\Gamma(S)$, instead of a constant, and consequently the specific values of those matrix cells will change each iteration during simulation (below).  Since for now, survival after age-1,  $p_{1}...p_{\omega-1}$, is still density independent and constant, the rows below in the Leslie matrix do not change from the D.I. case.
 
 ```{r Leslie matrix density dependent}
-M.dd <- function (a, gamma, f.vec, p.vec,n.vec,ext, B) {
+M.dd <- function (max.age,a, gamma, f.vec, p.vec,n.vec,ext, B) {
   M=matrix(nrow=max.age+1,ncol=max.age+1)
   ## Calls the G(S) function, which requires 3 new params: n.vec, ext, and B
   g <- G(a=a,f.vec=f.vec,n.vec=n.vec,ext=ext,gamma=gamma,B=B)
@@ -210,55 +211,224 @@ estBetaParams <- function(mu, cv) { # estimates parameters for a beta distributi
 }
 ## for a mean of around 0.1% (0.001) for a, and a cv of 0.5, the parameters are:
 
-ext.meanlog <- 6.67
-ext.sdlog <- 0.47
+a.alpha <- 4
+a.beta <- 4000
 
 estlnormParams <- function(mean,cv) { #estimates location and scale parameters for a lognormal distribution for a desired mean and cv, for use in R's rlnorm function
   var = (cv*mean)^2
   scale <- sqrt(log(1+var/mean^2))
   loc <- log(mean)-scale/2
   return(params=list(meanlog=loc, sdlog=scale))
-  }
-## for a mean of around 0.1% (0.001) for a, and a cv of 0.5, the parameters are:
+}
 
-a.alpha <- 4
-a.beta <- 4000
+ext.meanlog <- 6.67
+ext.sdlog <- 0.47
+
 ```
 
-```{r d.i. local population simulation function, echo=FALSE, include=FALSE}
+```{r di local population simulation function, echo=FALSE, include=FALSE}
 
 ## Calls all the parts we've coded so far
-# sim.pop <- function(nsims=100,nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, repr.age=2, f1=0.0129,f2=3.03,a.alpha=4,a.beta=4000,gamma, f.vec, p.vec,n.vec,ext, B) {
+sim.dipop <- function(nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, repr.age=2, gamma=0.125,
+                    f1=0.0129,f2=3.03,a.mu=0.001,a.cv=0.5, ext.mean=1000, ext.cv=0.5) {
+  ## age vector
   age.vec <- 0:max.age
-  l.vec <- vb.growth(age.vec=0:max.age,vb=vb) #vector of lengths (to be used later)
+  
+  ## lengths vector
+  vb <- c(Linf,K,t0)
+  l.vec <- vb.growth(age.vec=0:max.age,vb=vb)
+  
+  ## fertility vector
   f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+  
+  ## survival vector
   p.vec <- c(1,rep(surv,max.age))
   
-}
-
-d.i.sim1 <- matrix(nrow=(max.age+1), ncol=sim.years)
-d.i.simtot <- numeric()
-Ninit <- rep(250,15)
-d.i.sim1[,1] <- Ninit
-d.i.simtot <- sum(Ninit)
-a.rand <- rbeta(n=sim.years,shape1=a.alpha,shape2=a.beta) # a sampled from beta distribution
-ext.rand <- rlnorm(n=sim.years,meanlog=ext.meanlog,sdlog=ext.sdlog) # ext sample from a lognormal distribution
-for (i in 1:(sim.years-1)) {
-  M <- M.di(a=a.rand[i], gamma=gamma, f.vec=f.vec, p.vec=p.vec)
-  N.vec <- M%*%d.i.sim1[,i] + (gamma*ext.rand[i]*e.vec)
-  d.i.sim1[,i+1] <- N.vec
-  d.i.simtot[i+1] <- sum(N.vec)
+  ## allows external larvae to affect the matrix
+  e.vec <- c(1,rep(0,(max.age)))
+  
+  ## parameters and vector for beta-distributed a (self-recruitment rate)
+  a.alpha <- estBetaParams(mu=a.mu,cv=a.cv)[[1]]
+  a.beta <- estBetaParams(mu=a.mu,cv=a.cv)[[2]]
+  a.rand <- a.rand <- rbeta(n=nyears,shape1=a.alpha,shape2=a.beta)
+  
+  ## parameters and vector for log-norm-distributed ext (number of external larvae)
+  ext.meanlog <- estlnormParams(mean=ext.mean,cv=ext.cv)[[1]]
+  ext.sdlog <- estlnormParams(mean=ext.mean,cv=ext.cv)[[2]]
+  ext.rand <- rlnorm(n=nyears,meanlog=ext.meanlog,sdlog=ext.sdlog)
+  
+  ## the simulation output matrix
+  d.i.sim <- matrix(nrow=(max.age+1), ncol=nyears)
+  d.i.simtot <- numeric() # total population
+  Ninit <- rep(250,15) # starting abundance (equal in all classes)
+  d.i.sim[,1] <- Ninit
+  d.i.simtot <- sum(Ninit)
+  eigens <- numeric() # for holding eigenvalues
+  Radj <- numeric() # for holding "adjusted" R values (R*gamma*a in each year)
+  
+  ## run the simulation
+  for (i in 1:(nyears-1)) {
+    demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
+    M <- M.di(max.age=max.age,a=a.rand[i], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand, p.vec=p.vec*demo.rand)
+    eigens[i] <- eigen(M)[[1]][1] #store the dominant eigen value
+    Radj[i] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[i]
+    N.vec <- M%*%d.i.sim[,i] + (gamma*ext.rand[i]*e.vec)
+    d.i.sim[,i+1] <- N.vec
+    d.i.simtot[i+1] <- sum(N.vec)
   }
-plot(1:sim.years,d.i.sim1[15,],type='l')
-plot(1:sim.years,d.i.simtot,type='l')
-
-sim1.props <- apply(d.i.sim1, MARGIN=2,FUN= function(x) x/sum(x))
-cols <- rainbow(15)
-plot(150:160,sim1.props[1,150:160],col=cols[1],type='l')
-for(i in 2:15){
-  lines(150:160,sim1.props[i,150:160],col=cols[i],type='l')
+  demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
+  M <- M.di(a=a.rand[nyears], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand, p.vec=p.vec*demo.rand)
+  eigens[nyears] <- eigen(M)[[1]][1] #store the dominant eigen value
+  Radj[nyears] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[nyears]
+  
+  ## Returns a list with the last 100 years of the simulation, including population (every age class), total population summed over age classes, proportional population in each age class, eigenvalues of each year's matrix, and Reproductive Value for the average individual each year, adjusted for settler survival (gamma) and self-recruitment rate a.
+  return(list(pop=d.i.sim[(nyears-99):nyears],tot=d.i.simtot[(nyears-99):nyears],props=apply(d.i.sim,
+              MARGIN=2,FUN=function(x) x/sum(x))[(nyears-99):nyears], eigens=Re(eigens[(nyears-99):nyears]),
+              Radj=Radj[(nyears-99):nyears]))
 }
-mean.props <- apply(sim1.props, MARGIN=1, FUN=mean) #mean proportions
-sd.props <- apply(sim1.props, MARGIN=1, FUN=sd) #sd proportions
-cv.props <- apply(sim1.props, MARGIN=1, FUN= function(x) sd(x)/mean(x)) #cv of proportions
+
+simtest<- sim.dipop()
+simtestplot<-ggplot(melt(simtest[['Radj']]),aes(x=101:200,y=value)) +geom_line()
+simtestplot +geom_hline(aes(yintercept=mean(value)))
+```
+
+Running multiple simulations to test the sensitivity of the model to self-recruitment rate $a$
+
+```{r a sensitivity, echo=FALSE}
+a.sens <- seq(.001,.01,length=50)
+sens.cv <- numeric()
+sens.eigen <- numeric()
+sens.tot <- numeric()
+sens.Radj <- numeric()
+for(i in 1:length(a.sens)) {
+  sim <- sim.dipop(a.mu=a.sens[i])
+  sens.tot[i] <- mean(sim[['tot']])
+  sens.cv[i] <- sd(sim[['tot']])/mean(sim[['tot']])
+  sens.eigen[i] <- mean(sim[['eigens']])
+  sens.Radj[i]<-mean(sim[['Radj']])
+}
+sens.data <- as.data.frame(cbind(a.sens,sens.cv,sens.eigen,sens.tot,sens.Radj))
+ggplot(sens.data,aes(x=a.sens,y=sens.cv)) + geom_point()
+ggplot(sens.data,aes(x=a.sens,y=sens.eigen)) + geom_point()
+ggplot(sens.data,aes(x=a.sens,y=sens.Radj,colour='red')) +geom_point()
+ggplot(sens.data,aes(x=a.sens,y=sens.tot)) + geom_point()
+
+```
+
+What about sensitivity to mean external larval supply?
+
+```{r a sensitivity, echo=FALSE}
+ext.sens <- seq(100,10000,length=50)
+extsens.cv <- numeric()
+extsens.eigen <- numeric()
+extsens.tot <- numeric()
+extsens.Radj <- numeric()
+for(i in 1:length(ext.sens)) {
+  sim <- sim.dipop(ext.mean=ext.sens[i])
+  extsens.tot[i] <- mean(sim[['tot']])
+  extsens.cv[i] <- sd(sim[['tot']])/mean(sim[['tot']])
+  extsens.eigen[i] <- mean(sim[['eigens']])
+  extsens.Radj[i]<-mean(sim[['Radj']])
+}
+extsens.data <- as.data.frame(cbind(ext.sens,extsens.cv,extsens.eigen,extsens.tot,extsens.Radj))
+ggplot(extsens.data,aes(x=ext.sens,y=extsens.cv)) + geom_point()
+ggplot(extsens.data,aes(x=ext.sens,y=extsens.eigen)) + geom_point()
+ggplot(extsens.data,aes(x=ext.sens,y=extsens.Radj,colour='red')) +geom_point()
+ggplot(extsens.data,aes(x=ext.sens,y=extsens.tot)) + geom_point()
+
+```
+
+Now, what does adding density dependence do? Anything?
+The simulation for a density dependent population is very similar, adding in the wrinkle that of density-dependent survival, with one new required parameter B (describing the Beverton-Holt density-dependent relationship)
+
+```{r dd local population simulation function, echo=FALSE, include=FALSE}
+
+## Calls all the parts we've coded so far
+sim.ddpop <- function(nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, repr.age=2, gamma=0.125,
+                    f1=0.0129,f2=3.03,a.mu=0.001,a.cv=0.5, ext.mean=1000, ext.cv=0.5, B=0.0001) {
+  ## age vector
+  age.vec <- 0:max.age
+  
+  ## lengths vector
+  vb <- c(Linf,K,t0)
+  l.vec <- vb.growth(age.vec=0:max.age,vb=vb)
+  
+  ## fertility vector
+  f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+  
+  ## survival vector
+  p.vec <- c(1,rep(surv,max.age))
+  
+  ## allows external larvae to affect the matrix
+  e.vec <- c(1,rep(0,(max.age)))
+  
+  ## parameters and vector for beta-distributed a (self-recruitment rate)
+  a.alpha <- estBetaParams(mu=a.mu,cv=a.cv)[[1]]
+  a.beta <- estBetaParams(mu=a.mu,cv=a.cv)[[2]]
+  a.rand <- a.rand <- rbeta(n=nyears,shape1=a.alpha,shape2=a.beta)
+  
+  ## parameters and vector for log-norm-distributed ext (number of external larvae)
+  ext.meanlog <- estlnormParams(mean=ext.mean,cv=ext.cv)[[1]]
+  ext.sdlog <- estlnormParams(mean=ext.mean,cv=ext.cv)[[2]]
+  ext.rand <- rlnorm(n=nyears,meanlog=ext.meanlog,sdlog=ext.sdlog)
+  
+  ## the simulation output matrix
+  d.d.sim <- matrix(nrow=(max.age+1), ncol=nyears)
+  d.d.simtot <- numeric() # total population
+  Ninit <- rep(250,15) # starting abundance (equal in all classes)
+  d.d.sim[,1] <- Ninit
+  d.d.simtot <- sum(Ninit)
+  eigens <- numeric() # for holding eigenvalues
+  Radj <- numeric() # for holding "adjusted" R values (R*gamma*a in each year)
+  
+  ## run the simulation
+  for (i in 1:(nyears-1)) {
+    demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
+    M <- M.dd(max.age=max.age,a=a.rand[i], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand,
+              p.vec=p.vec*demo.rand,n.vec=d.d.sim[,i],ext=ext.mean, B=B*demo.rand)
+    eigens[i] <- eigen(M)[[1]][1] #store the dominant eigen value
+    Radj[i] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[i]
+    N.vec <- M%*%d.d.sim[,i] + (gamma*ext.rand[i]*e.vec)
+    d.d.sim[,i+1] <- N.vec
+    d.d.simtot[i+1] <- sum(N.vec)
+  }
+  demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
+  M <- M.dd(max.age=max.age,a=a.rand[i], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand,
+              p.vec=p.vec*demo.rand,n.vec=d.d.sim[,nyears],ext=ext.mean, B=B*demo.rand)
+  eigens[nyears] <- eigen(M)[[1]][1] #store the dominant eigen value
+  Radj[nyears] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[nyears]
+  
+  
+  ## Returns a list with the last 100 years of the simulation, including population (every age class), total
+  ## population summed over age classes, proportional population in each age class, eigenvalues of each year's matrix,
+  ## and Reproductive Value for the average individual each year, adjusted for settler survival (gamma) and
+  ## self-recruitment rate a.
+  
+  return(list(pop=d.d.sim[(nyears-99):nyears],tot=d.d.simtot[(nyears-99):nyears],props=apply(d.d.sim,
+              MARGIN=2,FUN=function(x) x/sum(x))[(nyears-99):nyears], eigens=Re(eigens[(nyears-99):nyears]),
+              Radj=Radj[(nyears-99):nyears]))
+}
+simtest<- sim.ddpop()
+simtestplot<-ggplot(melt(simtest[['Radj']]),aes(x=101:200,y=value)) +geom_line()
+simtestplot +geom_hline(aes(yintercept=mean(value)))
+```
+
+```{r dd a sensitivity, echo=FALSE}
+a.sens <- seq(.001,.01,length=50)
+sens.cv <- numeric()
+sens.eigen <- numeric()
+sens.tot <- numeric()
+sens.Radj <- numeric()
+for(i in 1:length(a.sens)) {
+  sim <- sim.ddpop(a.mu=a.sens[i])
+  sens.tot[i] <- mean(sim[['tot']])
+  sens.cv[i] <- sd(sim[['tot']])/mean(sim[['tot']])
+  sens.eigen[i] <- mean(sim[['eigens']])
+  sens.Radj[i]<-mean(sim[['Radj']])
+}
+sens.data <- as.data.frame(cbind(a.sens,sens.cv,sens.eigen,sens.tot,sens.Radj))
+ggplot(sens.data,aes(x=a.sens,y=sens.cv)) + geom_point()
+ggplot(sens.data,aes(x=a.sens,y=sens.eigen)) + geom_point()
+ggplot(sens.data,aes(x=a.sens,y=sens.Radj,colour='red')) +geom_point()
+ggplot(sens.data,aes(x=a.sens,y=sens.tot)) + geom_point()
 ```
