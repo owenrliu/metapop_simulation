@@ -1,0 +1,226 @@
+---
+title: "predicting lf"
+author: "Owen Liu"
+date: "November 13, 2015"
+output: html_document
+---
+
+T
+```{r packages,echo=F,results='hide'}
+library(RColorBrewer)
+library(ggplot2)
+library(reshape2)
+library(popbio)
+
+#multiple plot function
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+## Introduction and Project Goals
+
+This is an exploration of the use of matrix population models to explore
+population dynamics in a metapopulation context, in which local populations
+can be demographically open or closed, and vary in their demographic rates,
+especially in the survival of YOY, or new recruits.  First, the model formulation
+will be general, then I will attempt to parameterize it for specific species.
+
+Much of the model formulation is based on Caswell (2001) and adapted from
+Armsworth(2002). The initial goals (subject to change) are to:
+
+* practice building matrix models
+
+* investigate measurements of stability and resilience using such models
+
+* think about the consequences of metapopulation structure for resilience
+
+* practice using RMarkdown and GitHub
+
+## Model Construction
+
+### Parameters for the matrix model(s)
+
+Age-structured matrix model, where population is structured into $\omega$ age classes, and abundance denoted by $\textbf{N} = (N_{1},...,N_{\omega})$. A vector $\textbf{p}$ describes survival, where, for example, $p_{i}$ is the proportional survival of individuals from age $i$ to age $i+1$.  Similarly, $\textbf{f}_{i}$ is the fertility of individuals of age $i$.  $\xi$ is the number of external larvae supplied to a local population; $a \in [0,1]$ is the self-recruitment rate, that is, the proportion of locally produced larvae that return to that population; and $\gamma$ is the proportion of settlers that remain alive at the end of the first year.
+
+```{r params}
+max.age <- 14 # max age class (number of age classes will be this plus 1 (for age 0)
+gamma <- 0.125 # proportion of settling larvae that survive the first year
+ext <- 1000 # number of externally supplied larvae
+e.vec <- c(1,rep(0,(max.age))) # allows addition of external larvae to the matrix
+ret <- 0.5 # proportion of locally produced larvae that return (self-seeding proportion)
+surv <- 0.863 # natural survival of post-settler larvae
+p.vec <- c(1,rep(surv,max.age)) # survivorship vector (p.vec[i] is the survival from age i-2 to i-1)
+
+## Rate of self-recruitment (placeholder; sampled from a beta distribution later)
+a <- 0.0016
+
+## Von Bertalanffy parameters
+Linf <- 52.2 #L infinity, asymptotic length
+K <- 0.354 #growth rate
+t0 <- -0.766 #theoretical age at zero length
+vb <- c(Linf, K, t0) #concatenated 3 V-B growth params
+
+## Fecundity/fertility/length relationship
+repr.age <- 2 #age at first reproduction
+f1 <- 0.0129
+f2 <- 3.03
+
+## Beverton-Holt parameter, for density-dependent model
+B <- 1.1 # (B-H beta parameter)
+
+## Years for each simulation
+sim.years <- 200
+```
+#### Von Bertalanffy Growth
+
+The classic Von Bertalanffy Growth equation, of the form
+
+$$L(t) = L_\infty(1-e^{-K(t-t_0)})$$
+
+```{r VB Growth}
+vb.growth <- function(age.vec,vb)  { 
+  ## function that takes an age vector and a vector of V-B params, c(Linf, K, t0)
+  ## returns a vector of lengths
+  lengths <- sapply(age.vec, function(x) vb[1]*(1-exp(-vb[2]*(x-vb[3]))))
+  return(lengths)
+  }
+
+## with our parameters:
+l.vec <- vb.growth(age.vec=0:max.age,vb=vb) #vector of lengths (to be used later)
+plot(0:max.age,l.vec,main="Age vs. Length",type='l',xlab='Age, years',ylab='Length, cm',
+     xaxs='i')
+```
+
+#### Fecundity relationship
+
+This function relates length to fecundity, and is a power function that can be parameterized on a species-specific basis.  Adopted from Sadovy (1996)
+
+*Note: fecundity is zero until reproductive age (a parameter above) is reached*
+
+```{r fertility function}
+ fert <- function(age.vec, vb, repr.age, f1,f2) {
+  ## function that builds on VB equation above, taking three more parameters to calculate fertility
+  ## as a function of age.
+  ## From Armsworth (2002) and Sadovy (1996)
+  l.vec <- vb.growth(age.vec=age.vec,vb=vb)
+  f <- sapply(l.vec, function(x) f1*x^f2)
+  f[1:repr.age] <- 0
+  return(f)
+}
+
+# with our parameters:
+f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+plot(0:max.age,f.vec,main="Age vs. Fecundity",type='l',xlab='Age, years',ylab='Fertility (# eggs)',
+     xaxs='i')
+```
+
+
+#### Net Reproductive Rate
+
+The net reproductive rate, $R$, is a useful concept, and is defined as the expected lifetime reproductive contribution from an individual that survives the first year, from Caswell (2001).  $R$ is useful because if $R\gamma$*a* (the expected per capita lifetime production of recruits) is less than 1, we can expect than the population will shrink (below replacement level; i.e. a *sink* population) because an individual is not expected to replace itself.  The converse is also true, that when $R\gamma$*a* is greater than 1, the population will be a *source* :
+
+$$R = \sum_{t=1}^{\omega}f_{1}\prod_{k=0}^{t-1}p_{k}$$
+
+```{r net repro rate}
+net.R <- function(f.vec,p.vec) {
+  p.cum <- numeric()
+  for (i in 1:(max.age+1)) { #cumulative survival (i.e. vector of prob. surviving age 0:x)
+    p.cum[i] <- prod(p.vec[1:i])
+  }
+  R <- sum(f.vec*p.cum)
+  return(R)
+}
+```
+
+### Local, density independent population
+
+The density-independent model for a local population takes the form
+
+$$\textbf{N}(\textit{t} + 1) = \textbf{MN}(\textit{t}) + \gamma\xi\textbf{e}$$
+
+where **M** is a Leslie matrix, $\gamma$ is the proportion of settlers that survive the year, $\xi$ is the number of externally supplied larvae, and **e** is a vector to allow external larvae to effect the matrix. We will also use the defined parameter *a* $\in$ [0,1], which is the proportion of locally produced larvae that return to the same local adult population, i.e. the rate of self-recruitment.
+
+We can now construct the Leslie matrix **M** :
+
+```{r Leslie matrix density independent}
+M.di <- function (max.age,a, gamma, f.vec, p.vec) {
+  M=matrix(nrow=max.age+1,ncol=max.age+1)
+  r1 <- f.vec*a*gamma #first row, allowing for a partially open population and settler mortality in year 1
+  M[1,] <-r1
+  for (i in 2:(max.age+1)) { #rows 2 to max age
+    row <- numeric(max.age+1)
+    row[i-1] <- p.vec[i]
+    M[i,] <- row
+  }
+  return(M)
+}
+
+## a vector of stable age distribution (at equilibrium) can be calculated from the right eigenvector of the M matrix
+## we will use this later to 'seed' simulations with appropriate abundances
+stableage <- Re(eigen(M.di(max.age=max.age,a=a,gamma=gamma,f.vec=f.vec,p.vec=p.vec))$vector)[,1]
+stableage <- stableage/sum(stableage)
+stab.age.length <- data.frame(equil=stableage,age=0:14,len=l.vec)
+ggplot(aes(x=age,y=equil),data=stab.age.length)+geom_point()
+ggplot(aes(x=len,y=equil),data=stab.age.length)+geom_point()
+```
+
+Hypothetical length-frequency collection
+
+```{r len freq}
+#Make a stable age function (a and gamma assumed at their defaults f.vec for this exercise)
+stab.age <- function(max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, repr.age=2,f1=0.0129,f2=3.03) {
+  vb <- c(Linf,K,t0)
+  l.vec <- vb.growth(age.vec=0:max.age,vb=vb)
+  f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+  p.vec <- c(1,rep(surv,max.age))
+  agefreqs <- Re(eigen(M.di(max.age=max.age,a=0.0016,gamma=0.125,f.vec=f.vec,p.vec=p.vec))$vector)[,1]
+  agefreqs <- agefreqs/sum(agefreqs)
+  return(agefreqs)
+}
+bins <- seq(10,50,by=5)
+dat <- dnorm(bins,mean=30,sd=8)
+lf.rand <- data.frame(bin=bins,freq=dat)
+ggplot(aes(x=len,y=equil),data=stab.age.length)+geom_point()+geom_point(aes(x=bin,y=freq*2.5),data=lf.rand,col='red',size=4)
+
+Linf.sens <- list()
+for(i in seq(35,60,by=5)) {
+  data.temp <- stab.age(Linf=i)
+  vb.temp <- c(i,K,t0)
+  lvec.temp <- vb.growth(age.vec=0:max.age,vb=vb)
+  Linf.sens[[paste(i)]] <- data.frame(Linf=i,len=lvec.temp,equil=data.temp)
+}
+Linf.sens<-melt(Linf.sens,id='Linf')
+```
