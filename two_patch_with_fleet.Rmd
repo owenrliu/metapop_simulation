@@ -1,0 +1,330 @@
+---
+title: "two_patch_with_fleet"
+author: "Owen Liu"
+date: "December 4, 2015"
+output: html_document
+---
+
+```{r packages,echo=F,results='hide'}
+library(RColorBrewer)
+library(ggplot2)
+library(reshape2)
+library(popbio)
+```
+
+## Introduction and Project Goals
+
+This is a two-patch age-structure population model plus a fleet harvest model, in which local populations
+can be demographically open (i.e. subject to external larval supply and adult movement), and vary in their demographic rates.  First, the model formulation will be general, then I will attempt to parameterize it for specific species.
+
+Much of the biological model formulation is based on Caswell (2001), Armsworth(2002), and Horwood (1987) and the fleet model and example demographic parameters based on the California MLPA design process ('California Marine Life Protection Act Initiative Draft Methods Used to Evaluate MPA Propoals in the MLPA South Coast Study Region'). The initial goals (subject to change) are to:
+
+* investigate the consequences of variable demographic rates (growth, survival) on long-term population stability
+
+* investigate the impact of larval and adult dispersal and their interaction and relative magnitude in comparison to variable demographics.
+
+* investigate different models of fleet behavior and their consequences for the above.
+
+## Model Construction
+Fish populations in each of the two patches grow, die, and reproduce.  They are subject to an external larval supply, along with having some rate of self-recruitment.  Fishing is based on a selectivity curve, and modeled as endogenous to the age-specific survival function, and hence occurs simulateneously with natural mortality, following Caswell (2001) and Horwood (1987).  Movement of larvae and adults are modeled with a connectivity matrix, and hence also occur simulaneously with growth and mortality.
+
+
+### Parameters for the matrix population model(s)
+
+Age-structured matrix model, where population is structured into $\omega$ age classes, and abundance denoted by $\textbf{N} = (N_{1},...,N_{\omega})$. A vector $\textbf{p}$ describes survival, where, for example, $p_{i}$ is the proportional survival of individuals from age $i$ to age $i+1$, subject to fishing and natural mortality.  Similarly, $\textbf{f}_{i}$ is the fertility of individuals of age $i$.  $\xi$ is the number of external larvae supplied to a local population; $a \in [0,1]$ is the self-recruitment rate, that is, the proportion of locally produced larvae that return to that population; and $\gamma$ is the proportion of settlers that remain alive at the end of the first year.
+
+```{r params}
+max.age <- 14 # max age class (number of age classes will be this plus 1 (for age 0)
+gamma <- 0.125 # proportion of settling larvae that survive the first year
+ext <- 1000 # number of externally supplied larvae
+e.vec <- c(1,rep(0,(max.age))) # allows addition of external larvae to the matrix
+ret <- 0.5 # proportion of locally produced larvae that return (self-seeding proportion)
+surv <- 0.863 # natural survival of post-settlers
+mort <- 1-surv # natural mortality of post-settlers
+
+## Rate of self-recruitment (placeholder; sampled from a beta distribution later)
+a <- 0.0016
+
+## Fishing parameters
+fish <- mort #as a default, fishing intensity will equal natural mortality
+q.vec <- c(0.5, rep(1,(max.age))) # selectivity is assumed to be 0.5 for age-1 fish, and 1 for age-2 plus
+# note: vector of instantaneous fishing mortality rate F for each age class is equal to fish*q.vec, and total mortality Z is equal to fish*q.vec+mort.
+L50 <- 25 # length (cm) at 50% selectivity
+L95 <- 40 # length (cm) at 50% selectivity
+
+
+## Von Bertalanffy parameters
+Linf <- 52.2 #L infinity, asymptotic length
+K <- 0.354 #growth rate
+t0 <- -0.766 #theoretical age at zero length
+vb <- c(Linf, K, t0) #concatenated 3 V-B growth params
+
+## weight-at-length parameters, of the form a*L^b (from FishBase)
+lw.a <- 0.0105
+lw.b <- 3.11
+
+## Fecundity/fertility/length relationship (assume knife-edge maturity at age at first reproduction)
+repr.age <- 2 #age at first reproduction
+fert1 <- 0.0129
+fert2 <- 3.03
+mature.vec <- c(rep(0,repr.age-1),rep(1,max.age+2-repr.age))
+
+## Beverton-Holt parameter, for density-dependent model
+B <- 1.1 # (B-H beta parameter)
+
+## Years for each simulation
+sim.years <- 200
+```
+
+#### Von Bertalanffy Growth
+
+The classic Von Bertalanffy Growth equation, of the form
+
+$$L(t) = L_\infty(1-e^{-K(t-t_0)})$$
+
+```{r VB Growth}
+vb.growth <- function(age.vec,vb)  { 
+  ## function that takes an age vector and a vector of V-B params, c(Linf, K, t0)
+  ## returns a vector of lengths
+  lengths <- sapply(age.vec, function(x) vb[1]*(1-exp(-vb[2]*(x-vb[3]))))
+  return(lengths)
+  }
+
+## with our parameters:
+l.vec <- vb.growth(age.vec=0:max.age,vb=vb) #vector of lengths (to be used later)
+plot(0:max.age,l.vec,main="Age vs. Length",type='l',xlab='Age, years',ylab='Length, cm',
+     xaxs='i')
+```
+
+#### Selectivity-at-age
+Selectivity at age is calculated by first converting age to length, then using a logistic relationship $W=aL^{b}$ to calculate a vector of weights.  Weight-at-age is used to calculate spawning stock biomass and biomass yield for fisheries
+
+```{r selectivity at age}
+###Logistic selectivity curve converts age to length (cm) to selectivity [0,1]
+#using parameters L50 (length at 50% selectivity), and L95 (length
+#at 95% selectivity. Based on Punt and Kennedy (1997)
+selectivity.at.length <- function(vb,age.vec, L50, L95) {
+  l.vec <- vb.growth(age.vec=0:max.age,vb=vb)
+  sel.vec <- 1/(1+exp(-1*log(19)*(l.vec-L50)/(L95-L50)))  
+  return(sel.vec)
+}
+q.vec <- selectivity.at.length(vb=vb,age.vec=0:max.age, L50=L50, L95=L95)
+plot(0:max.age,q.vec,main="Age vs. Selectivity",type='l',xlab='Age, yr',ylab='Selectivity (proportion)',
+     xaxs='i')
+```
+
+#### Survival function, including fishing and natural mortality
+
+Survival of post-larval fish $\textbf{p}$ is an age-specific function of fishing pressure (which can be variable over time), selectivity-at-age q (assumed to be constant over time), and natural mortality, assumed to be constant.  Because larval survival is modeled separately, the first value in vector $\textbf{p}$ is 1. If fishing pressure is zero, survival will be determined solely by natural mortality.
+
+```{r survival}
+surv.fxn <- function(fish, q.vec, mort) {
+  p.vec <- exp(-fish*q.vec-mort)
+  # where fish is the fishing intensity, q.vec is the selectivity vector, and mort is natural mortality
+  return(p.vec)
+}
+## with our parameters:
+p.vec <- surv.fxn (fish=fish,q.vec=q.vec,mort=mort)
+plot(0:max.age,p.vec,main="Age vs. Survival",type='l',xlab='Age, years',ylab='Proportional Survival',
+     xaxs='i')
+```
+
+#### Fecundity relationship
+
+This function relates length to fecundity, and is a power function that can be parameterized on a species-specific basis.  Adopted from Sadovy (1996)
+
+*Note: fecundity is zero until reproductive age (a parameter above) is reached*
+
+```{r fertility function}
+ fert <- function(age.vec, vb, repr.age, fert1,fert2) {
+  ## function that builds on VB equation above, taking three more parameters to calculate fertility
+  ## as a function of age.
+  ## From Armsworth (2002) and Sadovy (1996)
+  l.vec <- vb.growth(age.vec=age.vec,vb=vb)
+  f <- sapply(l.vec, function(x) fert1*x^fert2)
+  f[1:repr.age] <- 0
+  return(f)
+}
+
+# with our parameters:
+fert.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,fert1=fert1,fert2=fert2)
+plot(0:max.age,fert.vec,main="Age vs. Fecundity",type='l',xlab='Age, years',ylab='Fertility (# eggs)',
+     xaxs='i')
+```
+
+#### Weight-at-age
+Weight at age is calculated by first converting age to length, then using the relationship $W=aL^{b}$ to calculate a vector of weights.  Weight-at-age is used to calculate spawning stock biomass and biomass yield for fisheries
+
+```{r weight at age}
+weight.at.age <- function(vb,age.vec,lw.a,lw.b) {
+  # first, age to length
+  l.vec <- vb.growth(age.vec=age.vec,vb=vb)
+  #then, weights-by-length (divide by 1000 for g to kg)
+  w.vec <- lw.a*l.vec^(lw.b)/1000
+  return(w.vec)
+}
+# with our parameters:
+w.vec <- weight.at.age(age.vec=0:max.age,vb=vb,lw.a=lw.a,lw.b=lw.b)
+plot(0:max.age,w.vec,main="Age vs. Weight",type='l',xlab='Age, years',ylab='Weight(kg)',
+     xaxs='i')
+```
+### Spawning stock biomass
+Spawning stock biomass is function of weight-at-age, numbers-at-age, and proportion mature at age
+
+```{r SSB}
+ssb <- function(w.vec,n.vec,mature.vec) sum(w.vec*n.vec*mature.vec)
+```
+
+#### Fisheries Yield
+Yield at each time step will be equal to the exploitation fraction(the proportion of fishing mortality relative to total mortality), times the overall survival rate, times weight-at-age and numbers-at-age, and summed over all age classes. The output will be a total catch in kg, subject to fishery selectivity and all of the demographic parameters and relationships defined above.  This equation will require the outputs of most of the equations above.
+
+```{r yield}
+yield <- function(fish,q.vec,mort,w.vec,n.vec) {
+  expl.rate<-(fish*q.vec)/(fish*q.vec+mort) # exploitation rate is equal to the ratio of fishing mortality (F=f*q) to total mortality (F+M). This equation returns an age-specific exploitation rate
+  y.vec <- expl.rate*w.vec*n.vec # yield by age 
+  return(sum(y)) # total yield
+}
+```
+
+#### Net Reproductive Rate
+
+The net reproductive rate, $R$, is a useful concept, and is defined as the expected lifetime reproductive contribution from an individual that survives the first year, from Caswell (2001).  $R$ is useful because if $R\gamma$*a* (the expected per capita lifetime production of recruits) is less than 1, we can expect than the population will shrink (below replacement level; i.e. a *sink* population) because an individual is not expected to replace itself.  The converse is also true, that when $R\gamma$*a* is greater than 1, the population will be a *source* :
+
+$$R = \sum_{t=1}^{\omega}f_{1}\prod_{k=0}^{t-1}p_{k}$$
+
+```{r net repro rate}
+net.R <- function(fert.vec,p.vec) {
+  p.cum <- numeric()
+  for (i in 1:(max.age+1)) { #cumulative survival (i.e. vector of prob. surviving age 0:x)
+    p.cum[i] <- prod(p.vec[1:i])
+  }
+  R <- sum(fert.vec*p.cum)
+  return(R)
+}
+```
+
+### Local population
+
+The density-independent model for a local population takes the form
+
+$$\textbf{N}(\textit{t} + 1) = \textbf{MN}(\textit{t}) + \gamma\xi\textbf{e}$$
+
+where **M** is a Leslie matrix, $\gamma$ is the proportion of settlers that survive the year, $\xi$ is the number of externally supplied larvae, and **e** is a vector to allow external larvae to affect the matrix. We will also use the defined parameter *a* $\in$ [0,1], which is the proportion of locally produced larvae that return to the same local adult population, i.e. the rate of self-recruitment.
+
+We can now construct the Leslie matrix **M** :
+
+```{r Leslie matrix density independent}
+M.di <- function (max.age,a, gamma, fert.vec, p.vec) {
+  M=matrix(nrow=max.age+1,ncol=max.age+1)
+  r1 <- fert.vec*a*gamma #first row, allowing for a partially open population and settler mortality in year 1
+  M[1,] <-r1
+  for (i in 2:(max.age+1)) { #rows 2 to max age
+    row <- numeric(max.age+1)
+    row[i-1] <- p.vec[i]
+    M[i,] <- row
+  }
+  return(M)
+}
+
+## a vector of stable age distribution (at equilibrium) can be calculated from the right eigenvector of the M matrix
+## we will use this later to 'seed' simulations with appropriate abundances
+stableage <- Re(eigen(M.di(max.age=max.age,a=a,gamma=gamma,fert.vec=fert.vec,p.vec=p.vec))$vector)[,1]
+stableage <- stableage/sum(stableage)
+```
+
+In this model formulation, the long-term growth or decline is determined by $R$ (or, equivalently, by the dominant eigenvalue of **M**), and consequently by the self-recruitment rate *a*.  Whether the population will grow or decline in the long-term is *not* determined by $\xi$, since it is an additive, not a multiplicative term.  $\xi$ will, however, influence abundance.
+
+## Simulations for Local Population
+
+To start, we can explore the behavior of these models by simulating a virtual population, described by the parameters above, and look at patterns over time in age sructure and population dynamics.  First, we can write a general simulation function, and apply it to the density independent local population.
+
+We can sample $a\in(0,1)$ from a skewed beta distribution, Beta$(\alpha,\beta)$, since in most years it will be very small.  $\xi$, the external larval supply, is sampled from a lognormal distribution.  The cv of both $a$ and $\xi$ are the same, cv=0.5.
+
+```{r distribution parameters for stochasticisty, echo=FALSE,results='hide'}
+estBetaParams <- function(mu, cv) { # estimates parameters for a beta distribution, for a desired mean and cv
+  var = (cv*mu)^2
+  alpha <- ((1 - mu) / var - 1 / mu) * mu ^ 2
+  beta <- alpha * (1 / mu - 1)
+  return(params = list(alpha = alpha, beta = beta))
+}
+## for a mean of around 0.1% (0.001) for a, and a cv of 0.5, the parameters are:
+
+a.alpha <- 4
+a.beta <- 4000
+
+estlnormParams <- function(mean,cv) { #estimates location and scale parameters for a lognormal distribution for a desired mean and cv, for use in R's rlnorm function
+  var = (cv*mean)^2
+  scale <- sqrt(log(1+var/mean^2))
+  loc <- log(mean)-scale/2
+  return(params=list(meanlog=loc, sdlog=scale))
+}
+
+ext.meanlog <- 6.67
+ext.sdlog <- 0.47
+
+```
+
+```{r di local population simulation function, echo=FALSE, include=FALSE}
+
+## Calls all the parts we've coded so far
+sim.dipop <- function(nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, mort=1-0.863, repr.age=2, gamma=0.125,fert1=0.0129,fish=1-0.863,fert2=3.03,a.mu=0.0016,a.cv=0.5, ext.mean=1000, ext.cv=0.5) {
+  ## age vector
+  age.vec <- 0:max.age
+  
+  ## lengths vector
+  vb <- c(Linf,K,t0)
+  l.vec <- vb.growth(age.vec=0:max.age,vb=vb)
+  
+  ## fertility vector
+  f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+  
+  ## survival vector
+  p.vec <- c(1,rep(surv,max.age))
+  
+  ## allows external larvae to affect the matrix
+  e.vec <- c(1,rep(0,(max.age)))
+  
+  ## parameters and vector for beta-distributed a (self-recruitment rate)
+  a.alpha <- estBetaParams(mu=a.mu,cv=a.cv)[[1]]
+  a.beta <- estBetaParams(mu=a.mu,cv=a.cv)[[2]]
+  a.rand <- rbeta(n=nyears,shape1=a.alpha,shape2=a.beta)
+  
+  ## parameters and vector for log-norm-distributed ext (number of external larvae)
+  ext.meanlog <- estlnormParams(mean=ext.mean,cv=ext.cv)[[1]]
+  ext.sdlog <- estlnormParams(mean=ext.mean,cv=ext.cv)[[2]]
+  ext.rand <- rlnorm(n=nyears,meanlog=ext.meanlog,sdlog=ext.sdlog)
+  
+  ## the simulation output matrix
+  d.i.sim <- matrix(nrow=(max.age+1), ncol=nyears)
+  d.i.simtot <- numeric() # total population
+  Ninit <- rep(250,15)*stableage # starting abundance (equal in all classes)
+  d.i.sim[,1] <- Ninit
+  d.i.simtot <- sum(Ninit)
+  eigens <- numeric() # for holding eigenvalues
+  Radj <- numeric() # for holding "adjusted" R values (R*gamma*a in each year)
+  
+  ## run the simulation
+  for (i in 1:(nyears-1)) {
+    demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
+    M <- M.di(max.age=max.age,a=a.rand[i], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand, p.vec=p.vec*demo.rand)
+    eigens[i] <- eigen(M)[[1]][1] #store the dominant eigen value
+    Radj[i] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[i]
+    N.vec <- M%*%d.i.sim[,i] + (gamma*ext.rand[i]*e.vec)
+    d.i.sim[,i+1] <- N.vec
+    d.i.simtot[i+1] <- sum(N.vec)
+  }
+  demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
+  M <- M.di(max.age=max.age,a=a.rand[nyears], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand, p.vec=p.vec*demo.rand)
+  eigens[nyears] <- eigen(M)[[1]][1] #store the dominant eigen value
+  Radj[nyears] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[nyears]
+  
+  ## Returns a list with the last 100 years of the simulation, including population (every age class), total population summed over age classes, proportional population in each age class, eigenvalues of each year's matrix, and Reproductive Value for the average individual each year, adjusted for settler survival (gamma) and self-recruitment rate a.
+  return(list(pop=d.i.sim[,(nyears-99):nyears],tot=d.i.simtot[(nyears-99):nyears],props=apply(d.i.sim,
+              MARGIN=2,FUN=function(x) x/sum(x))[,(nyears-99):nyears], eigens=Re(eigens[(nyears-99):nyears]),
+              Radj=Radj[(nyears-99):nyears]))
+}
+
+simtest<- sim.dipop()
+simtestplot<-ggplot(melt(simtest[['Radj']]),aes(x=101:200,y=value)) +geom_line()
+simtestplot +geom_hline(aes(yintercept=mean(value)))
+```

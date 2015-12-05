@@ -542,6 +542,4 @@ metapop.di <- function(npops=3, Ninits=rep(1000,3),nyears=200,max.age=14,Linf=52
     sim[[j]][['Radj']][nyears]
   }
 }
-
-  
-  
+```

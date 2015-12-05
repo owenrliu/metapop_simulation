@@ -1,6 +1,6 @@
 #### Channel Islands Benthic Density Comparison ####
 
-####Fish spatial heterogeneity and stability####
+#### Libraries and useful functions ####
 library(RColorBrewer)
 library(ggplot2)
 library(reshape2)
@@ -8,7 +8,9 @@ library(popbio)
 library(doBy)
 library(dplyr)
 
-## multiplot function
+W_D<-getwd()
+
+## multiplot function ##
 multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
   library(grid)
   
@@ -47,9 +49,6 @@ multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
 
 ## number of unique values
 lunique<-function(x) length(unique(x))
-
-W_D<-getwd()
-
 
 #### benthic density data ####
 # downloaded from http://www.esapubs.org/archive/ecol/E094/245/metadata.php#_Hlk327197452
