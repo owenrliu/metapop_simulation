@@ -67,7 +67,6 @@ img {
 </div>
 
 
-<pre><code>## Loading required package: quadprog</code></pre>
 <div id="introduction-and-project-goals" class="section level2">
 <h2>Introduction and Project Goals</h2>
 <p>This is a two-patch age-structure population model plus a fleet harvest model, in which local populations can be demographically open (i.e. subject to external larval supply and adult movement), and vary in their demographic rates. First, the model formulation will be general, then I will attempt to parameterize it for specific species.</p>
@@ -214,7 +213,7 @@ plot(0:max.age,w.vec,main=&quot;Age vs. Weight&quot;,type='l',xlab='Age, years',
 <pre class="r"><code>yield &lt;- function(fish,q.vec,mort,w.vec,n.vec) {
   expl.rate&lt;-(fish*q.vec)/(fish*q.vec+mort) # exploitation rate is equal to the ratio of fishing mortality (F=f*q) to total mortality (F+M). This equation returns an age-specific exploitation rate
   y.vec &lt;- expl.rate*w.vec*n.vec # yield by age 
-  return(sum(y)) # total yield
+  return(sum(y.vec)) # total yield
 }</code></pre>
 </div>
 <div id="net-reproductive-rate" class="section level4">
@@ -231,11 +230,11 @@ plot(0:max.age,w.vec,main=&quot;Age vs. Weight&quot;,type='l',xlab='Age, years',
 }</code></pre>
 </div>
 </div>
-<div id="local-density-independent-population" class="section level3">
-<h3>Local, density independent population</h3>
+<div id="local-population" class="section level3">
+<h3>Local population</h3>
 <p>The density-independent model for a local population takes the form</p>
 <p><span class="math">\[\textbf{N}(\textit{t} + 1) = \textbf{MN}(\textit{t}) + \gamma\xi\textbf{e}\]</span></p>
-<p>where <strong>M</strong> is a Leslie matrix, <span class="math">\(\gamma\)</span> is the proportion of settlers that survive the year, <span class="math">\(\xi\)</span> is the number of externally supplied larvae, and <strong>e</strong> is a vector to allow external larvae to effect the matrix. We will also use the defined parameter <em>a</em> <span class="math">\(\in\)</span> [0,1], which is the proportion of locally produced larvae that return to the same local adult population, i.e. the rate of self-recruitment.</p>
+<p>where <strong>M</strong> is a Leslie matrix, <span class="math">\(\gamma\)</span> is the proportion of settlers that survive the year, <span class="math">\(\xi\)</span> is the number of externally supplied larvae, and <strong>e</strong> is a vector to allow external larvae to affect the matrix. We will also use the defined parameter <em>a</em> <span class="math">\(\in\)</span> [0,1], which is the proportion of locally produced larvae that return to the same local adult population, i.e. the rate of self-recruitment.</p>
 <p>We can now construct the Leslie matrix <strong>M</strong> :</p>
 <pre class="r"><code>M.di &lt;- function (max.age,a, gamma, fert.vec, p.vec) {
   M=matrix(nrow=max.age+1,ncol=max.age+1)
@@ -253,8 +252,13 @@ plot(0:max.age,w.vec,main=&quot;Age vs. Weight&quot;,type='l',xlab='Age, years',
 ## we will use this later to 'seed' simulations with appropriate abundances
 stableage &lt;- Re(eigen(M.di(max.age=max.age,a=a,gamma=gamma,fert.vec=fert.vec,p.vec=p.vec))$vector)[,1]
 stableage &lt;- stableage/sum(stableage)</code></pre>
-<p>In this model formulation, the long-term growth or decline is determined by <span class="math">\(R\)</span> (or, equivalently, by the dominant eigenvalue of <strong>M</strong>), and consequently by the self-recruitment rate <em>a</em>. Whether the population will grow or decline in the long-term is <em>not</em> determined by <span class="math">\(\xi\)</span>, since it is an additive, not a multiplicative term. <span class="math">\(\xi\)</span> will, however, influence abundance. We will return to this model later in simulation.</p>
+<p>In this model formulation, the long-term growth or decline is determined by <span class="math">\(R\)</span> (or, equivalently, by the dominant eigenvalue of <strong>M</strong>), and consequently by the self-recruitment rate <em>a</em>. Whether the population will grow or decline in the long-term is <em>not</em> determined by <span class="math">\(\xi\)</span>, since it is an additive, not a multiplicative term. <span class="math">\(\xi\)</span> will, however, influence abundance.</p>
 </div>
+</div>
+<div id="simulations-for-local-population" class="section level2">
+<h2>Simulations for Local Population</h2>
+<p>To start, we can explore the behavior of these models by simulating a virtual population, described by the parameters above, and look at patterns over time in age sructure and population dynamics. First, we can write a general simulation function, and apply it to the density independent local population.</p>
+<p>We can sample <span class="math">\(a\in(0,1)\)</span> from a skewed beta distribution, Beta<span class="math">\((\alpha,\beta)\)</span>, since in most years it will be very small. <span class="math">\(\xi\)</span>, the external larval supply, is sampled from a lognormal distribution. The cv of both <span class="math">\(a\)</span> and <span class="math">\(\xi\)</span> are the same, cv=0.5.</p>
 </div>
 
 

@@ -182,7 +182,7 @@ Yield at each time step will be equal to the exploitation fraction(the proportio
 yield <- function(fish,q.vec,mort,w.vec,n.vec) {
   expl.rate<-(fish*q.vec)/(fish*q.vec+mort) # exploitation rate is equal to the ratio of fishing mortality (F=f*q) to total mortality (F+M). This equation returns an age-specific exploitation rate
   y.vec <- expl.rate*w.vec*n.vec # yield by age 
-  return(sum(y)) # total yield
+  return(sum(y.vec)) # total yield
 }
 ```
 
@@ -267,19 +267,28 @@ ext.sdlog <- 0.47
 ```{r di local population simulation function, echo=FALSE, include=FALSE}
 
 ## Calls all the parts we've coded so far
-sim.dipop <- function(nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, mort=1-0.863, repr.age=2, gamma=0.125,fert1=0.0129,fish=1-0.863,fert2=3.03,a.mu=0.0016,a.cv=0.5, ext.mean=1000, ext.cv=0.5) {
+sim.dipop <- function(nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=0.863, mort=1-0.863, repr.age=2, gamma=0.125,fert1=0.0129,fert2=3.03, fish=0, L50=25,L95=40, lw.a=0.0105, lw.b=3.11, a.mu=0.0016,a.cv=0.5, ext.mean=1000, ext.cv=0.5) {
   ## age vector
   age.vec <- 0:max.age
   
   ## lengths vector
   vb <- c(Linf,K,t0)
-  l.vec <- vb.growth(age.vec=0:max.age,vb=vb)
+  l.vec <- vb.growth(age.vec=age.vec,vb=vb)
   
   ## fertility vector
-  f.vec <- fert(age.vec=0:max.age,vb=vb,repr.age=repr.age,f1=f1,f2=f2)
+  f.vec <- fert(age.vec=age.vec,vb=vb,repr.age=repr.age,fert1=fert1,fert2=fert2)
+  
+  ## selectivity-at-age
+  q.vec <- selectivity.at.length(vb=vb,age.vec=0:max.age, L50=L50, L95=L95)
   
   ## survival vector
-  p.vec <- c(1,rep(surv,max.age))
+  p.vec <- surv.fxn(fish=fish, q.vec=q.vec,mort=mort)
+  
+  ## maturity-at-age
+  mature.vec <- c(rep(0,repr.age-1),rep(1,max.age+2-repr.age))
+  
+  ## weight-at-age
+  w.vec <- weight.at.age(age.vec=age.vec,vb=vb,lw.a=lw.a,lw.b=lw.b)
   
   ## allows external larvae to affect the matrix
   e.vec <- c(1,rep(0,(max.age)))
@@ -302,26 +311,33 @@ sim.dipop <- function(nyears=200,max.age=14,Linf=52.2,K=0.354,t0 = -0.766, surv=
   d.i.simtot <- sum(Ninit)
   eigens <- numeric() # for holding eigenvalues
   Radj <- numeric() # for holding "adjusted" R values (R*gamma*a in each year)
+  SSB <- numeric() # for holding value of SSB in each year
+  Yield <- numeric() #for holding value of yield in each year
   
   ## run the simulation
   for (i in 1:(nyears-1)) {
     demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
-    M <- M.di(max.age=max.age,a=a.rand[i], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand, p.vec=p.vec*demo.rand)
+    M <- M.di(max.age=max.age,a=a.rand[i], gamma=gamma*demo.rand, fert.vec=fert.vec*demo.rand, p.vec=p.vec*demo.rand)
     eigens[i] <- eigen(M)[[1]][1] #store the dominant eigen value
-    Radj[i] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[i]
+    Radj[i] <- net.R(fert.vec=fert.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[i]
     N.vec <- M%*%d.i.sim[,i] + (gamma*ext.rand[i]*e.vec)
     d.i.sim[,i+1] <- N.vec
     d.i.simtot[i+1] <- sum(N.vec)
+    SSB[i] <- ssb(w.vec=w.vec,n.vec=d.i.sim[,i],mature.vec=mature.vec)
+    Yield[i] <- yield(fish=fish,q.vec=q.vec,mort=mort,w.vec=w.vec,n.vec=d.i.sim[,i])
   }
+  ## for the last year
   demo.rand <- runif(1,min=0.875,max=1.125) # allows uniform random synchronous variation
-  M <- M.di(max.age=max.age,a=a.rand[nyears], gamma=gamma*demo.rand, f.vec=f.vec*demo.rand, p.vec=p.vec*demo.rand)
+  M <- M.di(max.age=max.age,a=a.rand[nyears], gamma=gamma*demo.rand, fert.vec=fert.vec*demo.rand, p.vec=p.vec*demo.rand)
   eigens[nyears] <- eigen(M)[[1]][1] #store the dominant eigen value
-  Radj[nyears] <- net.R(f.vec=f.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[nyears]
+  Radj[nyears] <- net.R(fert.vec=fert.vec*demo.rand,p.vec=p.vec*demo.rand)*(gamma*demo.rand)*a.rand[nyears]
+  SSB[nyears] <- ssb(w.vec=w.vec,n.vec=d.i.sim[,nyears],mature.vec=mature.vec)
+  Yield[nyears] <- yield(fish=fish,q.vec=q.vec,mort=mort,w.vec=w.vec,n.vec=d.i.sim[,nyears])
   
   ## Returns a list with the last 100 years of the simulation, including population (every age class), total population summed over age classes, proportional population in each age class, eigenvalues of each year's matrix, and Reproductive Value for the average individual each year, adjusted for settler survival (gamma) and self-recruitment rate a.
   return(list(pop=d.i.sim[,(nyears-99):nyears],tot=d.i.simtot[(nyears-99):nyears],props=apply(d.i.sim,
               MARGIN=2,FUN=function(x) x/sum(x))[,(nyears-99):nyears], eigens=Re(eigens[(nyears-99):nyears]),
-              Radj=Radj[(nyears-99):nyears]))
+              Radj=Radj[(nyears-99):nyears],SSB=SSB[(nyears-99):nyears],Yield=Yield[(nyears-99):nyears]))
 }
 
 simtest<- sim.dipop()
