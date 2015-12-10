@@ -1,0 +1,20 @@
+---
+title: "LaTEX board"
+author: "Owen Liu"
+date: "December 9, 2015"
+output: html_document
+---
+
+$$Sel=\dfrac{1}{1+e^{-ln(19)(L-L_{50})/(L_{95}-L_{50})}}$$
+
+$$f_i = f_1L_i^{f_2}$$
+
+$$SSB = \sum_{t=1}^{\omega}w_tn_iMat_i$$
+
+$$Y = \sum_{i=1}^{\omega}F_{rel,i}w_in_i$$
+
+$\omega$ x $\omega$
+
+Next, we set up two populations that interact through larval and adult movement, but they can have separate demographic rates (growth, natural mortality, larval survival, length-weight relationship, etc.) and can be subject to different fishing pressures.  Basically, the model formulation allows for separate parameter values for most of the parameters used in the single-populatin example above, while also adding larval and adult movement. Default demographic and fishing parameters are identical between populations. The metapopulation formulation requires an $\omega$ x $\omega$ square matrix $\textbf{Q}$ describing connectivity.  If $a_{ij}^{\omega}$ is the proportion of age class $\omega$ produced by population $j$ that move to local population $i$, then $^{ij}\textbf{Q}$ is the square matrix with top line $a_{ij} ^{i}\gamma(^{j}f_{1},...,^{j}f_{\omega})$ , allowing larvae from produced in population $j$ to affect population $i$, and other rows either zero (for no adult movement) or containing proportional movement of individuals of other age classes from $j$ to $i$.  Following Armsworth (2002) and Caswell (2001).
+
+Random environmental fluctuation in recruitment (self-recruitment rate) can also be parameterized separately.  There is no more external larvae ($\xi$) term, since the 2 patches are assumed to contain the entire population, and hence the population is demographically 'closed' at the metapopulation level.
